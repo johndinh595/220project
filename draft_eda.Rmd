@@ -1,0 +1,179 @@
+---
+title: "An Analysis of Early Career Data Scientists using Kaggle Data"
+author: "John Dinh"
+date: '2022-03-15'
+output: ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r, message = F, echo = F, warning = F}
+library(here)
+library(naniar)
+library(tidyverse)
+library(wesanderson)
+library(scales)
+library(vtable)
+library(ggplot2)
+library(ggpubr)
+library(skimr)
+library(magrittr)
+library(jtools)
+library(ggthemes)
+#Custom theme
+theme_set(theme_tufte())
+my_theme <- theme(plot.title = element_text(hjust = 0.5, face = 2, size = 18),
+        plot.subtitle = element_text(hjust = 0.5, size = 13),
+        axis.title = element_text(face = 1, size = 15),
+        axis.text = element_text(size = 13))
+
+# Custom palette
+my_palette <- c('#FAD510', '#CB2314', '#273046', '#354823', '#1E1E1E')
+```
+
+
+```{r}
+glimpse(data)
+data <- read.csv(here('healthcare-dataset-stroke-data.csv'))
+```
+# Data Cleaning
+
+First let's take a look at the overall data quality. There are no missing observations in this data.
+```{r}
+glimpse(data)
+```
+
+```{r}
+skim(data)
+```
+
+
+```{r}
+glimpse(data)
+cols <- c('gender', 'ever_married', 'work_type', 'Residence_type','smoking_status', 'stroke', 'hypertension', 'heart_disease')
+data %<>% mutate_at(cols, factor) %>% mutate(bmi = as.numeric(bmi))
+```
+
+There is a fairly large amount of unknown values for smoker status. 
+```{r}
+data %>% count(smoking_status) %>% rename(`Smoking Status` = smoking_status,
+                                          Count = n) %>% 
+  ggplot(aes(x = `Smoking Status`, y = Count))+
+  geom_col(aes(Count, reorder(`Smoking Status`, Count)))
+```
+
+```{r}
+#removing gender observation with other since it was only 1 observation
+#replaced inconsistent values in BMI and smoking status with unknown 
+data %<>% replace_with_na(data = data, replace = list(bmi = c('N/A'), smoking_status = c('Unknown'))) %>%  filter(gender != 'Other')
+```
+
+## Imputation
+
+The missing plot map shows there is no obvious patterns of missingness. We will impute values based on the assumption that values are missing completely at random (MCAR). 
+```{r}
+data %>% missing_plot()
+```
+
+Imputing Values for BMI. The plot below shows a slight right skew distribution for BMI. We can impute values for BMI using the median. The introduced randomness using imputation needs to be addressed. 
+```{r, warning = F, echo = F}
+data %>% ggplot() + geom_histogram(aes(x = bmi)) +
+  labs(xaxis = 'BMI', title = 'BMI Distribution')
+```
+
+```{r}
+#imputing median
+data %<>% mutate(bmi = ifelse(is.na(bmi), median(bmi, na.rm = T),
+                             bmi))
+data %>% ggplot() + geom_histogram(aes(x = bmi)) +
+  labs(xaxis = 'BMI', title = 'BMI Distribution')
+
+#imputing based on previous value since the missing plot show no pattern of missingness
+data$smoking_status <- as.character(data$smoking_status)
+data <- data %>% fill(smoking_status, .direction = 'downup') 
+
+stroke_clean <- data
+skim(data)
+```
+
+```{r}
+
+
+```
+
+# Exploratory Data Analysis
+
+There are more people that are older that get strokes. 
+```{r}
+age_density <- ggplot() + 
+  geom_density(data=stroke_clean, aes(x=age , group=as.factor(stroke), fill=as.factor(stroke)), size=1,alpha=0.5, adjust=2)  + 
+  ylab("Density")+ labs(fill=' ',x="Age")+
+  scale_fill_manual(values = my_palette[2:3], labels = c('No stroke','Stroke')) +
+  labs(title = 'Age vs Stroke Density Plot')
+
+```
+
+
+There is not much skewness in the stroke population compared to the non-stroke population. In the non-stroke population, the mean BMI is less than the median BMI. 
+
+```{r}
+bmi_density <- stroke_clean %>%  ggplot() + 
+  geom_density( aes(x=bmi , group=as.factor(stroke), fill=as.factor(stroke)), size=1,alpha=0.5, adjust=2)  + 
+  ylab("Density")+ labs(fill=' ',x="BMI")+
+  scale_fill_manual(values = c(my_palette[1], my_palette[5]), labels = c('No stroke','Stroke')) +
+  labs(title = 'BMI vs Stroke Density Plot')
+
+bmi_density
+
+
+```
+```{r}
+glucose_density <- stroke_clean %>%  ggplot() + 
+  geom_density(aes(x=avg_glucose_level , group=as.factor(stroke), fill=as.factor(stroke)), size=1,alpha=0.5, adjust=2)  + 
+  ylab("Density")+ labs(fill=' ', x= "Average Glucose Levels")+
+  scale_fill_manual(values = c(my_palette[4], my_palette[5]), labels = c('No stroke','Stroke')) +
+  labs(title = 'Average Glucose Levels vs Stroke Density Plot')
+glucose_density
+
+```
+Having a stroke is associated with around 25 BMI and older population. 
+```{r}
+
+age_bmi <- stroke_clean %>% arrange(stroke) %>% 
+  ggplot(aes(x = age, y = bmi, col = as.factor(stroke))) +
+  geom_jitter(alpha = 2, aes(col = stroke))+
+  labs(title = 'Scatter Plot: Age, BMI, Stroke')
+
+age_bmi
+
+```
+
+Stroke is also associated with older people here. THe middle range of glucose levels have much fewer respondents of stroke however. 
+```{r}
+stroke_clean %>% arrange(stroke) %>% 
+  ggplot(aes(x = age, y = avg_glucose_level, col = as.factor(stroke))) +
+  geom_jitter(alpha = 2, aes(col = stroke))+
+  labs(title = 'Scatter Plot: Age, Average Glucose Level, Stroke')
+```
+
+## Oversampling method:
+```{r}
+pros: no information loss compared to undersampling
+cons: prone to overfitting, bias 
+#stroke is heavily imbalanced
+pct <- stroke_clean %>% count(stroke) %>% mutate(pct = prop.table(n))
+stroke_clean %>%  ggplot(aes(x = stroke)) +
+  scale_x_discrete(labels = c('0' = 'Never had a stroke', '1'= 'Had a stroke'))+
+  geom_bar(fill = my_palette[2]) +
+  labs(x = '',
+       y = 'Counts',
+       title = 'Stroke Distribution')
+
+```
+
+
+
+
+
