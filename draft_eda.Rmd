@@ -19,9 +19,18 @@ library(vtable)
 library(ggplot2)
 library(ggpubr)
 library(skimr)
+library(kableExtra)
+library(knitr)
+library(themis)
+library(caret)
+library(car)
+library(randomForest)
+library(pROC)
 library(magrittr)
 library(jtools)
+library(finalfit)
 library(ggthemes)
+library(imbalance)
 #Custom theme
 theme_set(theme_tufte())
 my_theme <- theme(plot.title = element_text(hjust = 0.5, face = 2, size = 18),
@@ -30,25 +39,18 @@ my_theme <- theme(plot.title = element_text(hjust = 0.5, face = 2, size = 18),
         axis.text = element_text(size = 13))
 
 # Custom palette
-my_palette <- c('#FAD510', '#CB2314', '#273046', '#354823', '#1E1E1E')
+my_palette <- c('#FAD510', '#CB2314', '#273046', '#354823', '#1E1E1E',
+                "#A42820", "#5F5647", "#9B110E", "#3F5151", "#4E2A1E")
+
 ```
 
 
 ```{r}
-glimpse(data)
 data <- read.csv(here('healthcare-dataset-stroke-data.csv'))
 ```
 # Data Cleaning
 
 First let's take a look at the overall data quality. There are no missing observations in this data.
-```{r}
-glimpse(data)
-```
-
-```{r}
-skim(data)
-```
-
 
 ```{r}
 glimpse(data)
@@ -62,12 +64,15 @@ data %>% count(smoking_status) %>% rename(`Smoking Status` = smoking_status,
                                           Count = n) %>% 
   ggplot(aes(x = `Smoking Status`, y = Count))+
   geom_col(aes(Count, reorder(`Smoking Status`, Count)))
+
+
 ```
 
 ```{r}
 #removing gender observation with other since it was only 1 observation
 #replaced inconsistent values in BMI and smoking status with unknown 
 data %<>% replace_with_na(data = data, replace = list(bmi = c('N/A'), smoking_status = c('Unknown'))) %>%  filter(gender != 'Other')
+data1 %<>% replace_with_na(data = data, replace = list(bmi = c('N/A'), smoking_status = c('Unknown'))) %>%  filter(gender != 'Other')
 ```
 
 ## Imputation
@@ -79,29 +84,33 @@ data %>% missing_plot()
 
 Imputing Values for BMI. The plot below shows a slight right skew distribution for BMI. We can impute values for BMI using the median. The introduced randomness using imputation needs to be addressed. 
 ```{r, warning = F, echo = F}
-data %>% ggplot() + geom_histogram(aes(x = bmi)) +
-  labs(xaxis = 'BMI', title = 'BMI Distribution')
+
+bmi_preimute <- data1 %>% ggplot() + 
+  geom_histogram(color = 'black', fill = my_palette[6], aes(x = bmi)) +
+  labs(xaxis = 'BMI', title = 'BMI Distribution: Pre-Imputation') +
+  xlab('BMI') +
+  ylab('Count')
+
+bmi_preimute
 ```
 
 ```{r}
 #imputing median
 data %<>% mutate(bmi = ifelse(is.na(bmi), median(bmi, na.rm = T),
                              bmi))
-data %>% ggplot() + geom_histogram(aes(x = bmi)) +
-  labs(xaxis = 'BMI', title = 'BMI Distribution')
-
-#imputing based on previous value since the missing plot show no pattern of missingness
+bmi_plt <- data %>% ggplot() + geom_histogram(color = 'black', fill = my_palette[6], aes(x = bmi)) +
+  labs(xaxis = 'BMI', title = 'BMI Distribution: Median Imputation') +
+  xlab('BMI') +
+  ylab('Count')
+bmi_plt
+#smoking: imputing based on previous value since the missing plot show no pattern of missingness
 data$smoking_status <- as.character(data$smoking_status)
 data <- data %>% fill(smoking_status, .direction = 'downup') 
 
-stroke_clean <- data
+stroke_clean <- data %>% mutate(smoking_status = as.factor(smoking_status))
 skim(data)
 ```
 
-```{r}
-
-
-```
 
 # Exploratory Data Analysis
 
@@ -113,6 +122,7 @@ age_density <- ggplot() +
   scale_fill_manual(values = my_palette[2:3], labels = c('No stroke','Stroke')) +
   labs(title = 'Age vs Stroke Density Plot')
 
+age_density
 ```
 
 
@@ -129,6 +139,8 @@ bmi_density
 
 
 ```
+
+
 ```{r}
 glucose_density <- stroke_clean %>%  ggplot() + 
   geom_density(aes(x=avg_glucose_level , group=as.factor(stroke), fill=as.factor(stroke)), size=1,alpha=0.5, adjust=2)  + 
@@ -144,26 +156,32 @@ Having a stroke is associated with around 25 BMI and older population.
 age_bmi <- stroke_clean %>% arrange(stroke) %>% 
   ggplot(aes(x = age, y = bmi, col = as.factor(stroke))) +
   geom_jitter(alpha = 2, aes(col = stroke))+
-  labs(title = 'Scatter Plot: Age, BMI, Stroke')
+  scale_color_manual(labels = c('No stroke', 'Had a stroke'), values = c(my_palette[1], my_palette[5]))+
+  labs(title = 'Scatter Plot: Age, BMI, Stroke', col = '') +
+  xlab('Age')+
+  ylab('BMI')
 
 age_bmi
 
 ```
 
-Stroke is also associated with older people here. THe middle range of glucose levels have much fewer respondents of stroke however. 
+Stroke is also associated with older people here. The middle range of glucose levels have much fewer respondents of stroke however. 
 ```{r}
-stroke_clean %>% arrange(stroke) %>% 
+age_glucose_plt <- stroke_clean %>% arrange(stroke) %>% 
   ggplot(aes(x = age, y = avg_glucose_level, col = as.factor(stroke))) +
   geom_jitter(alpha = 2, aes(col = stroke))+
-  labs(title = 'Scatter Plot: Age, Average Glucose Level, Stroke')
+  scale_color_manual(labels = c('No stroke', 'Had a stroke'), values = c(my_palette[1], my_palette[9]))+
+  labs(title = 'Scatter Plot: Age, Average Glucose Level, Stroke', col = '') +
+  ylab('Average Glucose Level')+
+  xlab('Age')
+
+age_glucose_plt
 ```
 
-## Oversampling method:
+
 ```{r}
-pros: no information loss compared to undersampling
-cons: prone to overfitting, bias 
 #stroke is heavily imbalanced
-pct <- stroke_clean %>% count(stroke) %>% mutate(pct = prop.table(n))
+#pct <- stroke_clean %>% count(stroke) %>% mutate(pct = prop.table(n))
 stroke_clean %>%  ggplot(aes(x = stroke)) +
   scale_x_discrete(labels = c('0' = 'Never had a stroke', '1'= 'Had a stroke'))+
   geom_bar(fill = my_palette[2]) +
@@ -173,6 +191,102 @@ stroke_clean %>%  ggplot(aes(x = stroke)) +
 
 ```
 
+## Train-Test Split
+
+```{r}
+set.seed(225231)
+dt <- sort(sample(nrow(stroke_clean), nrow(stroke_clean) * .7))
+train_stroke <- stroke_clean[dt,] %>% select(-id)
+test_stroke <- stroke_clean[-dt,] %>% select(-id)
+```
+
+
+#Will use smote, oversampling technique since our dataset is not too large
+
+
+```{r}
+train_oversampled <- ovun.sample(stroke ~. , data = train_stroke, 
+                                 method = 'over', 
+                                 seed = 252323)
+train_oversampled <- train_oversampled$data
+
+
+```
+
+Distribution of Stroke after Upsampling
+```{r}
+stroke_postsampling <- train_oversampled %>% ggplot(aes(x = stroke)) +
+   scale_x_discrete(labels = c('0' = 'Never had a stroke', '1'= 'Had a stroke'))+
+  geom_bar(fill = my_palette[3]) +
+  labs(x = '',
+       y = 'Counts',
+       title = 'Stroke Distribution: Post-Upsampling')
+stroke_postsampling
+
+```
+https://www.researchgate.net/publication/269177030_The_Impact_of_Oversampling_with_SMOTE_on_the_Performance_of_3_Classifiers_in_Prediction_of_Type_2_Diabetes
+
+# Model Fitting
+
+The ANOVA output shows a non significant chi-square value with p-value = .9. This means that the reduced model without the predictor,`bmi`, fits as well as the full model.  By the principle of parsimony, the more simple model will be used to assess the goodness of fit. 
+```{r}
+library(fastDummies)
+train_oversampled_d <- train_oversampled
+train_oversampled_d <- dummy_cols(train_oversampled_d, select_columns = c('gender', 'hypertension', 'heart_disease', 'ever_married','work_type', 'Residence_type',
+                                                                          'smoking_status'),
+                                  remove_selected_columns = T)
+test_stroke_d <- test_stroke
+test_stroke_d <- dummy_cols(test_stroke_d, select_columns = c('gender', 'hypertension', 'heart_disease', 'ever_married','work_type', 'Residence_type',
+                                                                          'smoking_status'),
+                                  remove_selected_columns = T)
+ 
+full_fit <- glm(stroke ~ ., data = train_oversampled_d, family = 'binomial'(link = logit)) %>% tidy()
+reduced_fit <- glm(stroke  ~ . , data = train_oversampled_d %>% select(-bmi), family = 'binomial'(link = logit)) %>%  tidy()
+
+kable(anova(fit_reduced, fit_full, test = 'Chisq'))
+```
+
+
+```{r}
+train_oversampled_d %>% 
+  ggplot(aes())
+
+```
+
+
+```{r Pearson X^2 statistics} 
+fit <- glm(stroke  ~ . , data = train_oversampled_d %>% select(-bmi), family = 'binomial'(link = logit))
+sum(residuals(fit, type = "deviance")^2)/fit$df.residual
+```
+
+
+```{r}
+probs <- fit %>% predict(test_stroke_d, type = 'response')
+predicted_classes <- ifelse(probs > .5, '1', '0')
+caret::confusionMatrix(data = as.factor(predicted_classes), reference = test_stroke_d$stroke)
+```
+
+
+```{r}
+step <- step(glm(stroke~., data = train_oversampled, family ='binomial'(link = logit)),
+             criterion = 'BIC')
+summary(step)
+```
+
+```{r}
+step_model <- glm(formula = stroke ~ gender + age + hypertension + heart_disease + 
+    ever_married + work_type + Residence_type + avg_glucose_level + 
+    smoking_status, family = binomial(link = logit), data = train_oversampled)
+
+probs_step <- step_model %>% predict(test_stroke, type = 'response')
+predicted_classes_step <- ifelse(probs_step > .5, '1', '0')
+caret::confusionMatrix(data = as.factor(predicted_classes_step), reference = test_stroke$stroke)
+```
+
+
+```{r}
+test_roc <- roc(test_stroke_d$stroke ~ probs, plot = T, print.auc = T)
+```
 
 
 
