@@ -65,7 +65,6 @@ data %>% count(smoking_status) %>% rename(`Smoking Status` = smoking_status,
   ggplot(aes(x = `Smoking Status`, y = Count))+
   geom_col(aes(Count, reorder(`Smoking Status`, Count)))
 
-
 ```
 
 ```{r}
@@ -107,8 +106,15 @@ bmi_plt
 data$smoking_status <- as.character(data$smoking_status)
 data <- data %>% fill(smoking_status, .direction = 'downup') 
 
+d <- data %>% count(smoking_status) %>% rename(`Smoking Status` = smoking_status,
+                                          Count = n) %>% 
+  ggplot(aes(x = `Smoking Status`, y = Count))+
+  geom_col(aes(Count, reorder(`Smoking Status`, Count)))
+
+
+
 stroke_clean <- data %>% mutate(smoking_status = as.factor(smoking_status))
-skim(data)
+
 ```
 
 
@@ -136,8 +142,6 @@ bmi_density <- stroke_clean %>%  ggplot() +
   labs(title = 'BMI vs Stroke Density Plot')
 
 bmi_density
-
-
 ```
 
 
@@ -209,8 +213,6 @@ train_oversampled <- ovun.sample(stroke ~. , data = train_stroke,
                                  method = 'over', 
                                  seed = 252323)
 train_oversampled <- train_oversampled$data
-
-
 ```
 
 Distribution of Stroke after Upsampling
@@ -254,10 +256,7 @@ train_oversampled_d %>%
 ```
 
 
-```{r Pearson X^2 statistics} 
-fit <- glm(stroke  ~ . , data = train_oversampled_d %>% select(-bmi), family = 'binomial'(link = logit))
-sum(residuals(fit, type = "deviance")^2)/fit$df.residual
-```
+
 
 
 ```{r}
